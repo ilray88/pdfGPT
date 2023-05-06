@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import jieba
 import urllib.request
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -37,7 +38,7 @@ def pdf_to_text(path, start_page=1, end_page=None):
     text_list = []
 
     for i in range(start_page - 1, end_page):
-        text = doc.load_page(i).get_text("text")
+        text = doc.load_page(i).get_text("text").encode('utf-8').decode('utf-8')
         text = preprocess(text)
         text_list.append(text)
 
@@ -45,8 +46,9 @@ def pdf_to_text(path, start_page=1, end_page=None):
     return text_list
 
 
+
 def text_to_chunks(texts, word_length=150, start_page=1):
-    text_toks = [t.split(' ') for t in texts]
+    text_toks = [list(jieba.cut(t)) for t in texts]
     page_nums = []
     chunks = []
 
@@ -60,11 +62,10 @@ def text_to_chunks(texts, word_length=150, start_page=1):
             ):
                 text_toks[idx + 1] = chunk + text_toks[idx + 1]
                 continue
-            chunk = ' '.join(chunk).strip()
+            chunk = ''.join(chunk).strip()
             chunk = f'[Page no. {idx+start_page}]' + ' ' + '"' + chunk + '"'
             chunks.append(chunk)
     return chunks
-
 
 class SemanticSearch:
     def __init__(self):
@@ -114,7 +115,7 @@ def generate_text(openAI_key, prompt, engine="text-davinci-003"):
     completions = openai.Completion.create(
         engine=engine,
         prompt=prompt,
-        max_tokens=512,
+        max_tokens=1024,
         n=1,
         stop=None,
         temperature=0.7,
@@ -126,22 +127,24 @@ def generate_text(openAI_key, prompt, engine="text-davinci-003"):
 def generate_answer(question, openAI_key):
     topn_chunks = recommender(question)
     prompt = ""
-    prompt += 'search results:\n\n'
-    for c in topn_chunks:
-        prompt += c + '\n\n'
+    prompt += '搜索结果：\n\n'
+    for i, c in enumerate(topn_chunks):
+        # 添加页码标识，i+1是因为Python列表从0开始计数，而这里要从1开始计数
+        prompt += f'[第{i+1}页]\n\"{c}\"\n\n'
+
 
     prompt += (
-        "Instructions: Compose a comprehensive reply to the query using the search results given. "
-        "Cite each reference using [ Page Number] notation (every result has this number at the beginning). "
-        "Citation should be done at the end of each sentence. If the search results mention multiple subjects "
-        "with the same name, create separate answers for each. Only include information found in the results and "
-        "don't add any additional information. Make sure the answer is correct and don't output false content. "
-        "If the text does not relate to the query, simply state 'Text Not Found in PDF'. Ignore outlier "
-        "search results which has nothing to do with the question. Only answer what is asked. The "
-        "answer should be short and concise. Answer step-by-step. \n\nQuery: {question}\nAnswer: "
+        "说明：请使用给定的搜索结果撰写全面的回答。"
+        "使用[页码]符号引用每个参考文献（每个结果在开头都有这个编号）。 "
+        "每个句子都应该在结尾处加上引用。如果搜索结果提到了多个具有相同名称的主题，请为每个主题创建单独的答案。 "
+        "仅包括在结果中找到的信息，不要添加任何额外的信息。"
+        "确保答案是正确的，不要输出虚假内容 "
+        "如果文本与查询无关，请简单说明“未在PDF中找到文本”。"
+        "忽略与问题无关的离群值搜索结果。只回答被问到的问题。"
+        "答案应该简短明了。分步回答。 \n\n查询: {question}\n答案: "
     )
-
-    prompt += f"Query: {question}\nAnswer:"
+    # 修改prompt，使其能够正确引用中文
+    prompt += f"查询: {question}\n答案:"
     answer = generate_text(openAI_key, prompt, "text-davinci-003")
     return answer
 
